@@ -1,0 +1,49 @@
+
+
+/* --- AI Suggestion Widget Styles --- */
+
+.ai-suggestion-highlight-green {
+	background-color: rgba(0, 255, 0, 0.1); /* Light green background for suggested additions */
+}
+
+.ai-suggestion-highlight-red {
+	background-color: rgba(255, 0, 0, 0.1); /* Light red background for suggested deletions */
+	text-decoration: line-through;
+}
+
+.monaco-editor .ai-suggestion-widget {
+	/* Position slightly above the line end, adjust as needed */
+	/* Using transform might help fine-tune positioning */
+	background-color: var(--vscode-editorWidget-background);
+	border: 1px solid var(--vscode-editorWidget-border);
+	padding: 2px 5px;
+	border-radius: 3px;
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+	display: flex;
+	gap: 5px;
+	/* Ensure it appears above editor text */
+	z-index: 40; /* Check z-index values used by other editor elements */
+}
+
+.monaco-editor .ai-suggestion-widget button {
+	background-color: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	border: 1px solid var(--vscode-button-border, transparent);
+	padding: 1px 4px;
+	border-radius: 2px;
+	cursor: pointer;
+	font-size: 12px; /* Adjust as needed */
+}
+
+.monaco-editor .ai-suggestion-widget button:hover {
+	background-color: var(--vscode-button-hoverBackground);
+}
+
+.monaco-editor .ai-suggestion-widget .ai-suggestion-accept {
+	/* Optional: Specific styling for accept */
+}
+
+.monaco-editor .ai-suggestion-widget .ai-suggestion-reject {
+	/* Optional: Specific styling for reject */
+}
+

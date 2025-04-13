@@ -5,7 +5,7 @@
 
 import * as nls from '../../nls.js';
 import { URI } from '../../base/common/uri.js';
-import { ICodeEditor, IDiffEditor } from './editorBrowser.js';
+import { ICodeEditor, IDiffEditor, IContentWidget, IContentWidgetPosition, ContentWidgetPositionPreference } from './editorBrowser.js';
 import { ICodeEditorService } from './services/codeEditorService.js';
 import { Position } from '../common/core/position.js';
 import { IEditorContribution, IDiffEditorContribution } from '../common/editorCommon.js';
@@ -21,10 +21,15 @@ import { Registry } from '../../platform/registry/common/platform.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { assertType } from '../../base/common/types.js';
 import { ThemeIcon } from '../../base/common/themables.js';
-import { IDisposable } from '../../base/common/lifecycle.js';
+import { IDisposable, DisposableStore } from '../../base/common/lifecycle.js';
 import { KeyMod, KeyCode } from '../../base/common/keyCodes.js';
 import { ILogService } from '../../platform/log/common/log.js';
 import { getActiveElement } from '../../base/browser/dom.js';
+import * as dom from '../../base/browser/dom.js';
+import { Range } from '../common/core/range.js';
+import { IModelDeltaDecoration, TrackedRangeStickiness } from '../common/model.js';
+import { themeColorFromId } from '../../platform/theme/common/themeService.js';
+import { overviewRulerInfo } from '../common/core/editorColorRegistry.js';
 
 export type ServicesAccessor = InstantiationServicesAccessor;
 export type EditorContributionCtor = IConstructorSignature<IEditorContribution, [ICodeEditor]>;
@@ -716,3 +721,279 @@ export const SelectAllCommand = registerCommand(new MultiCommand({
 		order: 1
 	}]
 }));
+
+// --- AI Suggestion Inline Widget ---
+
+class AiSuggestionWidget implements IContentWidget {
+
+	private static ID_COUNTER = 0;
+	private readonly _id: string;
+	private _domNode: HTMLElement | null = null;
+	private _editor: ICodeEditor;
+	private _range: Range;
+	private _disposables = new DisposableStore();
+
+	// Define callbacks for accept/reject actions
+	private _onAccept: () => void;
+	private _onReject: () => void;
+
+	constructor(editor: ICodeEditor, range: Range, onAccept: () => void, onReject: () => void) {
+		this._id = `ai.suggestion.widget.${AiSuggestionWidget.ID_COUNTER++}`;
+		this._editor = editor;
+		this._range = range; // The range the suggestion applies to
+		this._onAccept = onAccept;
+		this._onReject = onReject;
+		// Add the widget upon creation
+		// Note: It's often better practice for the *creator* to call addContentWidget,
+		// but doing it here simplifies the command logic slightly for now.
+		this._editor.addContentWidget(this);
+	}
+
+	getId(): string {
+		return this._id;
+	}
+
+	getDomNode(): HTMLElement {
+		if (!this._domNode) {
+			this._domNode = document.createElement('div');
+			this._domNode.className = 'ai-suggestion-widget'; // Add CSS for this class
+			dom.reset(this._domNode); // Clear any previous content
+
+			const acceptButton = document.createElement('button');
+			acceptButton.className = 'ai-suggestion-accept'; // Add CSS
+			acceptButton.textContent = 'Accept'; // Or use an icon (e.g., from codicons)
+			this._disposables.add(dom.addStandardDisposableListener(acceptButton, 'click', (e) => {
+				e.stopPropagation();
+				this._onAccept();
+				// Dispose is handled by the manager/caller now
+			}));
+
+			const rejectButton = document.createElement('button');
+			rejectButton.className = 'ai-suggestion-reject'; // Add CSS
+			rejectButton.textContent = 'Reject'; // Or use an icon
+			this._disposables.add(dom.addStandardDisposableListener(rejectButton, 'click', (e) => {
+				e.stopPropagation();
+				this._onReject();
+				// Dispose is handled by the manager/caller now
+			}));
+
+			this._domNode.appendChild(acceptButton);
+			this._domNode.appendChild(rejectButton);
+
+			// Ensure editor recalculates layout for the widget
+			this._editor.layoutContentWidget(this);
+		}
+		return this._domNode;
+	}
+
+	getPosition(): IContentWidgetPosition | null {
+		if (!this._range || !this._editor.hasModel()) {
+			return null;
+		}
+		// Position the widget near the end of the suggestion range
+		// Experiment with preferences for overlay effect
+		return {
+			position: { lineNumber: this._range.endLineNumber, column: this._editor.getModel()!.getLineMaxColumn(this._range.endLineNumber) },
+			preference: [ContentWidgetPositionPreference.ABOVE, ContentWidgetPositionPreference.BELOW]
+		};
+	}
+
+	dispose(): void {
+		this._editor.removeContentWidget(this);
+		this._disposables.dispose();
+		this._domNode = null; // Allow GC
+	}
+}
+
+// --- Manager for AI Suggestions per Editor ---
+interface ActiveSuggestion {
+	id: string;
+	widget: AiSuggestionWidget;
+	decorationIds: string[];
+	range: Range; // Store the initial range for invalidation checks
+	disposables: DisposableStore;
+}
+
+// Use WeakMap to avoid memory leaks if editor instances are somehow held onto elsewhere
+const activeSuggestions = new WeakMap<ICodeEditor, Map<string, ActiveSuggestion>>();
+const editorListeners = new WeakMap<ICodeEditor, IDisposable>(); // Track listeners per editor
+
+function getEditorSuggestions(editor: ICodeEditor): Map<string, ActiveSuggestion> {
+	if (!activeSuggestions.has(editor)) {
+		const editorMap = new Map<string, ActiveSuggestion>();
+		activeSuggestions.set(editor, editorMap);
+
+		// Clean up when editor is disposed or model changes
+		const editorDisposables = new DisposableStore();
+
+		editorDisposables.add(editor.onDidDispose(() => {
+			const suggestions = activeSuggestions.get(editor);
+			suggestions?.forEach(suggestion => suggestion.disposables.dispose());
+			activeSuggestions.delete(editor);
+			editorListeners.get(editor)?.dispose(); // Dispose listeners too
+			editorListeners.delete(editor);
+			editorDisposables.dispose(); // Dispose the store itself
+		}));
+
+		editorDisposables.add(editor.onDidChangeModel(() => {
+			// Clear suggestions when the model changes entirely
+			const suggestions = activeSuggestions.get(editor);
+			suggestions?.forEach(suggestion => suggestion.disposables.dispose());
+			suggestions?.clear();
+		}));
+
+		// Listen for model content changes to invalidate suggestions
+		editorDisposables.add(editor.onDidChangeModelContent(e => {
+			const suggestions = activeSuggestions.get(editor);
+			if (!suggestions || suggestions.size === 0) { return; }
+
+			const changedRanges = e.changes.map(c => c.range);
+			const suggestionsToDispose: string[] = [];
+
+			suggestions.forEach((suggestion, suggestionId) => {
+				// Simple invalidation: if any change touches the suggestion range
+				// A more robust approach might involve tracking range transformations
+				const suggestionRange = suggestion.range;
+				const isInvalidated = changedRanges.some(changeRange => Range.areIntersectingOrTouching(suggestionRange, changeRange));
+
+				if (isInvalidated) {
+					console.log(`Suggestion ${suggestionId} invalidated by edit.`);
+					suggestionsToDispose.push(suggestionId);
+				}
+			});
+
+			suggestionsToDispose.forEach(id => {
+				cleanupSuggestion(editor, id); // Use the cleanup function
+			});
+		}));
+
+		editorListeners.set(editor, editorDisposables); // Store the listeners disposable
+	}
+	// Non-null assertion is safe because we ensure the map exists above
+	return activeSuggestions.get(editor)!;
+}
+
+function cleanupSuggestion(editor: ICodeEditor, suggestionId: string) {
+	const suggestions = activeSuggestions.get(editor);
+	const suggestion = suggestions?.get(suggestionId);
+	if (suggestion) {
+		suggestion.disposables.dispose(); // This calls widget.dispose() and removes decorations
+		suggestions.delete(suggestionId);
+	}
+}
+
+
+// --- Command to Show AI Suggestion Diff and Widget ---
+
+CommandsRegistry.registerCommand('_internal.ai.showInlineSuggestionDiff', (accessor, args) => {
+	const codeEditorService = accessor.get(ICodeEditorService);
+	// Ensure we target the editor associated with the resource if provided, otherwise fallback to active/focused
+	let editor = codeEditorService.getActiveCodeEditor(); // Default to active
+
+	// --- Process Args ---
+	// Expect args = { resourceUri: URI, suggestionId: string, range: IRange, suggestionText: string }
+	if (!args || typeof args.suggestionId !== 'string' || !args.range || typeof args.suggestionText !== 'string' || !URI.isUri(args.resourceUri)) {
+		console.error('Invalid arguments for _internal.ai.showInlineSuggestionDiff', args);
+		return;
+	}
+	const { resourceUri, suggestionId, suggestionText } = args;
+	const suggestionRange = Range.lift(args.range); // The range in the *current* document to be replaced/augmented
+
+	// Try to find the editor associated with the resource URI
+	const editors = codeEditorService.listCodeEditors();
+	const targetEditor = editors.find(e => e.getModel()?.uri.toString() === resourceUri.toString());
+	if (targetEditor) {
+		editor = targetEditor;
+	} else if (editor?.getModel()?.uri.toString() !== resourceUri.toString()) {
+		console.error(`No editor found for resource URI ${resourceUri.toString()} and active editor does not match.`);
+		return; // Cannot proceed if the target editor isn't found or active
+	}
+
+	if (!editor) {
+		console.error('No suitable editor found for AI suggestion.');
+		return;
+	}
+	const currentEditor = editor; // Use a const for clarity within the scope
+
+	const model = currentEditor.getModel();
+	if (!model) {
+		console.error('No model found for the target editor.');
+		return;
+	}
+
+	// --- Get Editor Suggestion Map ---
+	const editorSuggestions = getEditorSuggestions(currentEditor);
+
+	// --- Cleanup Previous Suggestion (if any with same ID) ---
+	cleanupSuggestion(currentEditor, suggestionId);
+
+	// --- Apply Highlighting Decorations ---
+	// TODO: Compute actual diff and create decorations for adds/removes
+	const decorations: IModelDeltaDecoration[] = [
+		{
+			range: suggestionRange,
+			options: {
+				className: 'ai-suggestion-highlight-green', // Define this CSS class for additions
+				isWholeLine: false, // Make this dependent on diff?
+				overviewRuler: {
+					color: themeColorFromId(overviewRulerInfo), // Use appropriate color
+					position: 1 // OverviewRulerLane.Center
+				},
+				stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+			}
+		},
+		// Example for deletion (would need range from diff)
+		// {
+		// 	range: deletedRange,
+		// 	options: {
+		// 		className: 'ai-suggestion-highlight-red', // Define this CSS class for deletions
+		// 		isWholeLine: true,
+		//      // ... other options
+		// 	}
+		// }
+	];
+
+	let currentDecorationIds: string[] = [];
+	currentEditor.changeDecorations((changeAccessor) => {
+		currentDecorationIds = changeAccessor.deltaDecorations([], decorations);
+	});
+
+	// --- Add the Content Widget ---
+	const suggestionDisposables = new DisposableStore();
+
+	const handleAccept = () => {
+		console.log(`Accepted suggestion: ${suggestionId}`);
+		// Apply the actual code change
+		const editOperation = { range: suggestionRange, text: suggestionText, forceMoveMarkers: true };
+		// Ensure the correct model is targeted if using model directly
+		currentEditor.getModel()?.pushEditOperations([], [editOperation], () => null);
+		cleanupSuggestion(currentEditor, suggestionId); // Cleanup after applying edit
+	};
+
+	const handleReject = () => {
+		console.log(`Rejected suggestion: ${suggestionId}`);
+		cleanupSuggestion(currentEditor, suggestionId); // Just cleanup UI
+	};
+
+	// Create the widget instance (it adds itself to the editor)
+	const suggestionWidget = new AiSuggestionWidget(currentEditor, suggestionRange, handleAccept, handleReject);
+
+	// Add widget and decorations to the disposable store for this suggestion
+	suggestionDisposables.add(suggestionWidget);
+	suggestionDisposables.add({ dispose: () => {
+		// Ensure decorations are removed even if widget disposal fails somehow
+		currentEditor.changeDecorations(changeAccessor => {
+			changeAccessor.deltaDecorations(currentDecorationIds, []);
+		});
+	}});
+
+	// Store the active suggestion details
+	editorSuggestions.set(suggestionId, {
+		id: suggestionId,
+		widget: suggestionWidget,
+		decorationIds: currentDecorationIds,
+		range: suggestionRange, // Store the initial range
+		disposables: suggestionDisposables
+	});
+
+});
