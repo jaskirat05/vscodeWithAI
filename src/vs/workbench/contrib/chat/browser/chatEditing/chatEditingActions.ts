@@ -11,6 +11,7 @@ import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { isCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { ServicesAccessor } from '../../../../../editor/browser/editorExtensions.js';
 import { Position } from '../../../../../editor/common/core/position.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { isLocation, Location, TextEdit } from '../../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
@@ -694,7 +695,7 @@ registerAction2(class ReviewExternalEditsAction extends Action2 {
 			throw new Error('Failed to get or create a chat model for the editor location.');
 		}
 
-		const editingSession = await chatEditingService.startOrContinueGlobalEditingSession(chatModel, true);
+		const editingSession = await chatEditingService.startOrContinueGlobalEditingSession(chatModel);
 		if (!editingSession) {
 			logService.error(`ReviewExternalEditsAction: Failed to get or create an editing session for chat model ${chatModel.sessionId}.`);
 			throw new Error(`Failed to get or create an editing session for chat model ${chatModel.sessionId}.`);
@@ -749,19 +750,23 @@ registerAction2(class TestReviewExternalEditsAction extends Action2 {
 		const targetUri = activeEditorPane.input.resource;
 
 		const sampleEdits: TextEdit[] = [
-			{
+			{ // Existing insertion edit
 				range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
 				text: `// Test edit added by workbench.action.chat.testReviewExternalEdits @ ${new Date().toISOString()}\n`
+			},
+			{ // Add a deletion edit for line 2
+				range: new Range(2, 1, 3, 1), // Deletes line 2 entirely
+				text: ''
 			}
 		];
 
-		logService.info(`TestReviewExternalEditsAction: Triggering 'workbench.action.chat.reviewExternalEdits' for URI ${targetUri.toString()}`);
+		logService.info(`TestReviewExternalEditsAction: Triggering 'workbench.action.chat.reviewExternalEdits' for URI ${targetUri.toString()} with ${sampleEdits.length} edits.`);
 
 		try {
 			await commandService.executeCommand('workbench.action.chat.reviewExternalEdits', {
 				edits: sampleEdits,
 				targetUri: targetUri,
-				sourceDescription: "Test Edits from Command Palette"
+				sourceDescription: "Test Edits (Insert+Delete) from Command Palette" // Updated description
 			});
 			logService.info('TestReviewExternalEditsAction: Command executed successfully.');
 		} catch (error) {
