@@ -7,22 +7,25 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { basename } from '../../../../../base/common/resources.js';
-import { URI } from '../../../../../base/common/uri.js';
+import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { isCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { ServicesAccessor } from '../../../../../editor/browser/editorExtensions.js';
 import { Position } from '../../../../../editor/common/core/position.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
-import { isLocation, Location } from '../../../../../editor/common/languages.js';
+import { isLocation, Location, TextEdit } from '../../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, IAction2Options, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { EditorActivation } from '../../../../../platform/editor/common/editor.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { isChatViewTitleActionContext } from '../../common/chatActions.js';
 import { ChatContextKeys } from '../../common/chatContextKeys.js';
@@ -32,6 +35,13 @@ import { isRequestVM, isResponseVM } from '../../common/chatViewModel.js';
 import { ChatAgentLocation, ChatMode } from '../../common/constants.js';
 import { CHAT_CATEGORY } from '../actions/chatActions.js';
 import { ChatTreeItem, IChatWidget, IChatWidgetService } from '../chat.js';
+
+// Interface for the command arguments
+interface IReviewExternalEditsArgs {
+	edits: TextEdit[];
+	targetUri: UriComponents;
+	sourceDescription?: string;
+}
 
 export abstract class EditingSessionAction extends Action2 {
 
@@ -109,7 +119,6 @@ registerAction2(class RemoveFileFromWorkingSet extends WorkingSetAction {
 			precondition: ChatContextKeys.requestInProgress.negate(),
 			menu: [{
 				id: MenuId.ChatEditingWidgetModifiedFilesToolbar,
-				// when: ContextKeyExpr.or(ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, WorkingSetEntryState.Attached), ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, WorkingSetEntryState.Suggested), ContextKeyExpr.equals(chatEditingWidgetFileStateContextKey.key, WorkingSetEntryState.Transient)),
 				order: 5,
 				group: 'navigation'
 			}],
@@ -121,7 +130,6 @@ registerAction2(class RemoveFileFromWorkingSet extends WorkingSetAction {
 
 		const pendingEntries = currentEditingSession.entries.get().filter((entry) => uris.includes(entry.modifiedURI) && entry.state.get() === ModifiedFileEntryState.Modified);
 		if (pendingEntries.length > 0) {
-			// Ask for confirmation if there are any pending edits
 			const file = pendingEntries.length > 1
 				? localize('chat.editing.removeFile.confirmationmanyFiles', "{0} files", pendingEntries.length)
 				: basename(pendingEntries[0].modifiedURI);
@@ -136,16 +144,13 @@ registerAction2(class RemoveFileFromWorkingSet extends WorkingSetAction {
 			}
 		}
 
-		// Remove from working set
 		await currentEditingSession.reject(...uris);
 		currentEditingSession.remove(...uris);
 
-		// Remove from chat input part
 		for (const uri of uris) {
 			chatWidget.attachmentModel.delete(uri.toString());
 		}
 
-		// Clear all related file suggestions
 		if (chatWidget.attachmentModel.fileAttachments.length === 0) {
 			chatWidget.input.relatedFiles?.clear();
 		}
@@ -302,7 +307,6 @@ export async function discardAllEditsWithConfirmation(accessor: ServicesAccessor
 
 	const dialogService = accessor.get(IDialogService);
 
-	// Ask for confirmation if there are any edits
 	const entries = currentEditingSession.entries.get();
 	if (entries.length > 0) {
 		const confirmation = await dialogService.confirm({
@@ -322,7 +326,6 @@ export async function discardAllEditsWithConfirmation(accessor: ServicesAccessor
 	return true;
 }
 
-// TODO@roblourens this may be obsolete?
 export class ChatEditingRemoveAllFilesAction extends EditingSessionAction {
 	static readonly ID = 'chatEditing.clearWorkingSet';
 
@@ -345,11 +348,9 @@ export class ChatEditingRemoveAllFilesAction extends EditingSessionAction {
 	}
 
 	override async runEditingSessionAction(accessor: ServicesAccessor, editingSession: IChatEditingSession, chatWidget: IChatWidget, ...args: any[]): Promise<void> {
-		// Remove all files from working set
 		const uris = [...editingSession.entries.get()].map((e) => e.modifiedURI);
 		editingSession.remove(...uris);
 
-		// Remove all file attachments
 		const fileAttachments = chatWidget.attachmentModel ? chatWidget.attachmentModel.fileAttachments : [];
 		const attachmentIdsToRemove = fileAttachments.map(attachment => attachment.toString());
 		chatWidget.attachmentModel.delete(...attachmentIdsToRemove);
@@ -486,7 +487,6 @@ registerAction2(class RemoveAction extends Action2 {
 				await configurationService.updateValue('chat.editing.confirmEditRequestRemoval', false);
 			}
 
-			// Restore the snapshot to what it was before the request(s) that we deleted
 			const snapshotRequestId = chatRequests[itemIndex].id;
 			await session.restoreSnapshot(snapshotRequestId, undefined);
 		}
@@ -519,12 +519,12 @@ registerAction2(class OpenWorkingSetHistoryAction extends Action2 {
 	}
 });
 
-registerAction2(class OpenWorkingSetHistoryAction extends Action2 {
+registerAction2(class OpenWorkingSetSnapshotAction extends Action2 {
 
 	static readonly id = 'chat.openFileSnapshot';
 	constructor() {
 		super({
-			id: OpenWorkingSetHistoryAction.id,
+			id: OpenWorkingSetSnapshotAction.id,
 			title: localize('chat.openSnapshot.label', "Open File Snapshot"),
 			menu: [{
 				id: MenuId.ChatEditingCodeBlockContext,
@@ -598,8 +598,6 @@ registerAction2(class ResolveSymbolsContextAction extends EditingSessionAction {
 			this.getImplementations(position, textModel, languageFeaturesService)
 		]);
 
-		// Sort the references, definitions and implementations by
-		// how important it is that they make it into the working set as it has limited size
 		const attachments = [];
 		for (const reference of [...definitions, ...implementations, ...references]) {
 			attachments.push(chatWidget.attachmentModel.asVariableEntry(reference.uri));
@@ -667,3 +665,65 @@ export class ViewPreviousEditsAction extends EditingSessionAction {
 	}
 }
 registerAction2(ViewPreviousEditsAction);
+
+registerAction2(class ReviewExternalEditsAction extends Action2 {
+	constructor() {
+		super({
+			id: 'workbench.action.chat.reviewExternalEdits',
+			title: localize2('reviewExternalEdits', "Review External Edits"),
+			category: CHAT_CATEGORY,
+			f1: false,
+		});
+	}
+
+	async run(accessor: ServicesAccessor, args: IReviewExternalEditsArgs): Promise<void> {
+		const chatService = accessor.get(IChatService);
+		const chatEditingService = accessor.get(IChatEditingService);
+		const editorService = accessor.get(IEditorService);
+		const logService = accessor.get(ILogService);
+
+		if (!args || !args.edits || !args.targetUri) {
+			logService.warn('ReviewExternalEditsAction: Invalid arguments received.', args);
+			throw new Error('ReviewExternalEditsAction: Invalid arguments. Requires { edits: TextEdit[], targetUri: UriComponents }');
+		}
+
+		const targetUri = URI.revive(args.targetUri);
+
+		const chatModel = chatService.startSession(ChatAgentLocation.Editor, CancellationToken.None);
+		if (!chatModel) {
+			logService.error('ReviewExternalEditsAction: Failed to get or create a chat model for the editor location.');
+			throw new Error('Failed to get or create a chat model for the editor location.');
+		}
+
+		const editingSession = await chatEditingService.startOrContinueGlobalEditingSession(chatModel);
+		if (!editingSession) {
+			logService.error(`ReviewExternalEditsAction: Failed to get or create an editing session for chat model ${chatModel.sessionId}.`);
+			throw new Error(`Failed to get or create an editing session for chat model ${chatModel.sessionId}.`);
+		}
+
+		const dummyRequestText = args.sourceDescription ?? `External Edits @ ${Date.now()}`;
+		const request = chatModel.addRequest({ text: dummyRequestText, parts: [] }, { variables: [] }, 0);
+
+		if (!request.response) {
+			logService.error(`ReviewExternalEditsAction: Failed to get response model for dummy request ${request.id} in session ${chatModel.sessionId}.`);
+			throw new Error(`Failed to get response model for dummy request ${request.id}.`);
+		}
+
+		logService.info(`ReviewExternalEditsAction: Applying ${args.edits.length} external edits for URI ${targetUri.toString()} to request ${request.id} in session ${editingSession.chatSessionId}`);
+
+		request.response.updateContent({
+			kind: 'textEdit',
+			uri: targetUri,
+			edits: args.edits,
+			done: true
+		});
+
+		const activeEditorPane = editorService.activeEditorPane;
+		if (activeEditorPane && activeEditorPane.input?.resource?.toString() === targetUri.toString()) {
+		} else {
+			logService.info(`ReviewExternalEditsAction: Target URI ${targetUri.toString()} is not the active editor.`);
+		}
+	}
+});
+
+

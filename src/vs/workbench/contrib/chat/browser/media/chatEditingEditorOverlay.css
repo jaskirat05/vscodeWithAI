@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 .chat-editor-overlay-widget {
-	padding: 0px;
+	padding: 2px; /* Adjust as needed */
 	color: var(--vscode-button-foreground);
-	background-color: var(--vscode-button-background);
+	background-color: var(--vscode-editorWidget-background); /* Match editor widget background */
 	border-radius: 5px;
-	border: 1px solid var(--vscode-contrastBorder);
+	border: 1px solid var(--vscode-editorWidget-border);
 	display: flex;
 	align-items: center;
 	z-index: 10;
@@ -35,11 +35,12 @@
 .chat-editor-overlay-widget .chat-editor-overlay-progress {
 	align-items: center;
 	display: none;
-	padding: 0px 5px;
+	padding: 0 5px;
 	font-size: 12px;
 	font-variant-numeric: tabular-nums;
 	overflow: hidden;
 	white-space: nowrap;
+	color: var(--vscode-editorWidget-foreground);
 }
 
 .chat-editor-overlay-widget.busy .chat-editor-overlay-progress {
@@ -135,4 +136,70 @@
 	height: 100%;
 	background-color: var(--vscode-toolbar-hoverBackground);
 	transition: left 0.5s linear;
+}
+
+/* Style the toolbar container itself if needed */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar {
+	/* Add padding around the buttons if the main widget doesn't have enough */
+	background: linear-gradient(to right, rgb(202, 110, 242),rgb(215, 215, 26));
+	display: flex; /* Use flex to manage button layout */
+	align-items: center;
+	border-width:1px;
+}
+
+/* Style individual buttons */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item {
+	border: 1px solid var(--vscode-button-border, transparent); /* Add a border */
+	margin-left: 1px; /* Add space between buttons */
+	overflow: hidden; /* Keep gradient contained */
+	background: transparent; /* Purple to yellow gradient */
+	transition: filter 0.1s ease-in-out; /* Smooth hover effect */
+    opacity: 1;
+
+}
+
+/* Remove margin from the first button */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item:first-child {
+	margin-left: 0;
+}
+
+/* Style the label/icon inside the button */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item > .action-label {
+	padding: 3px 6px; /* Add padding inside the button */
+	color: white !important; /* Ensure text is readable on gradient - adjust if needed */
+	display: block; /* Ensure padding applies correctly */
+	font-size: 12px;
+}
+
+/* Hide icons if labels are present (assuming TS code forces labels) */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item > .action-label.codicon {
+	/* If you want icons AND gradient, adjust padding/display here */
+	/* If you want labels only, keep icons hidden or ensure TS doesn't add them */
+	color: linear-gradient(to right, rgb(202, 110, 242),rgb(230, 230, 193)) !important; /* Make icon readable */
+	padding: 3px;
+}
+
+
+/* Hover effect for buttons */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item:hover {
+	filter: brightness(1.2); /* Make it slightly brighter on hover */
+	border-color: var(--vscode-focusBorder);
+}
+
+/* Disabled state */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item.disabled {
+	background: transparent; /* Use a standard disabled background */
+	filter: grayscale(1);
+	opacity: 1;
+	cursor: default;
+}
+
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item.disabled > .action-label {
+	color: white; /* Standard disabled text color */
+	opacity:0.9;
+}
+
+/* Remove default background from the action bar itself */
+.chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar {
+	background-color: transparent;
 }

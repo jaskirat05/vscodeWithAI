@@ -40,6 +40,10 @@ import { IModifiedFileEntry, IModifiedFileEntryChangeHunk, IModifiedFileEntryEdi
 import { isTextDiffEditorForEntry } from './chatEditing.js';
 import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
 import { ChatAgentLocation } from '../../common/constants.js';
+import { IAction } from '../../../../../base/common/actions.js';
+import { IActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
+import { MenuEntryActionViewItem, createActionViewItem } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { MenuItemAction } from '../../../../../platform/actions/common/actions.js';
 
 export interface IDocumentDiff2 extends IDocumentDiff {
 
@@ -693,6 +697,14 @@ class DiffHunkWidget implements IOverlayWidget, IModifiedFileEntryChangeHunk {
 			menuOptions: {
 				renderShortTitle: true,
 				arg: this,
+			},
+			actionViewItemProvider: (action: IAction, options: IActionViewItemOptions) => {
+				// Use MenuEntryActionViewItem for menu items, respecting renderShortTitle
+				if (action instanceof MenuItemAction) {
+					return instaService.createInstance(MenuEntryActionViewItem, action, { ...options });
+				}
+				// Fallback to default creation for other actions if any
+				return createActionViewItem(instaService, action, options);
 			},
 		});
 
