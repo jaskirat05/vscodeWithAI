@@ -141,19 +141,21 @@
 /* Style the toolbar container itself if needed */
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar {
 	/* Add padding around the buttons if the main widget doesn't have enough */
-	padding: 2px;
+	background: linear-gradient(to right, rgb(202, 110, 242),rgb(215, 215, 26));
 	display: flex; /* Use flex to manage button layout */
 	align-items: center;
+	border-width:1px;
 }
 
 /* Style individual buttons */
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item {
 	border: 1px solid var(--vscode-button-border, transparent); /* Add a border */
-	border-radius: 3px; /* Slightly rounded corners */
-	margin-left: 5px; /* Add space between buttons */
+	margin-left: 1px; /* Add space between buttons */
 	overflow: hidden; /* Keep gradient contained */
-	background: linear-gradient(to right, purple, yellow); /* Purple to yellow gradient */
+	background: transparent; /* Purple to yellow gradient */
 	transition: filter 0.1s ease-in-out; /* Smooth hover effect */
+    opacity: 1;
+
 }
 
 /* Remove margin from the first button */
@@ -164,7 +166,7 @@
 /* Style the label/icon inside the button */
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item > .action-label {
 	padding: 3px 6px; /* Add padding inside the button */
-	color: black !important; /* Ensure text is readable on gradient - adjust if needed */
+	color: white !important; /* Ensure text is readable on gradient - adjust if needed */
 	display: block; /* Ensure padding applies correctly */
 	font-size: 12px;
 }
@@ -173,7 +175,7 @@
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item > .action-label.codicon {
 	/* If you want icons AND gradient, adjust padding/display here */
 	/* If you want labels only, keep icons hidden or ensure TS doesn't add them */
-	color: black !important; /* Make icon readable */
+	color: linear-gradient(to right, rgb(202, 110, 242),rgb(230, 230, 193)) !important; /* Make icon readable */
 	padding: 3px;
 }
 
@@ -186,14 +188,15 @@
 
 /* Disabled state */
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item.disabled {
-	background: var(--vscode-button-secondaryBackground); /* Use a standard disabled background */
+	background: transparent; /* Use a standard disabled background */
 	filter: grayscale(1);
-	opacity: 0.6;
+	opacity: 1;
 	cursor: default;
 }
 
 .chat-editor-overlay-widget .chat-editor-overlay-toolbar .monaco-action-bar .action-item.disabled > .action-label {
-	color: var(--vscode-button-secondaryForeground) !important; /* Standard disabled text color */
+	color: white; /* Standard disabled text color */
+	opacity:0.9;
 }
 
 /* Remove default background from the action bar itself */

@@ -17,7 +17,7 @@
 .chat-diff-change-content-widget .monaco-action-bar {
 	padding: 0;
 	border-radius: 2px;
-	background-color: var(--vscode-button-background);
+	background-color: black;
 	color: var(--vscode-button-foreground);
 }
 
